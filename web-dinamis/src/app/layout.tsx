@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const outfit = Outfit({ subsets: ["latin"], weight: ["300", "400", "600", "800"], variable: "--font-outfit" });
 
 export const metadata: Metadata = {
-  title: "DigiTech | Architecting the Future",
+  title: "Moh FIrdaus - NIM",
   description: "Membangun masa depan dengan teknologi. Partner strategis Anda dalam akselerasi transformasi digital global.",
   keywords: ["tech", "ai", "cloud", "cybersecurity", "software"],
 };
