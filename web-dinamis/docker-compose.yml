@@ -1,0 +1,63 @@
+# ──────────────────────────────────────────────────────────────
+# docker-compose.yml — web-dinamis
+#
+# Mengelola: database (MariaDB) + aplikasi Next.js
+# TIDAK termasuk container-statis — dikelola terpisah oleh deploy.yaml
+#
+# PENTING: File ini TIDAK boleh berisi credential langsung.
+# Semua nilai sensitif dibaca dari file .env di server EC2.
+# Buat file /home/ubuntu/container-dinamis/.env di server dengan
+# isi yang sesuai (lihat .env.example).
+# ──────────────────────────────────────────────────────────────
+services:
+
+  db-webdinamis:
+    image: mariadb:lts
+    container_name: db-webdinamis
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      # File SQL awal — hanya jalan saat volume pertama kali dibuat
+      - ./db_data/dbcompro_nim.sql:/docker-entrypoint-initdb.d/dbcompro_nim.sql:ro
+      # Folder migrasi — di-mount agar migrate.sh bisa diakses dari docker exec
+      - ./db_data/migrations:/migrations:ro
+    restart: always
+    healthcheck:
+      test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - app-network
+
+  container-dinamis:
+    image: ${DOCKERHUB_USERNAME}/web-dinamis:latest
+    container_name: container-dinamis
+    ports:
+      - "3000:3000"
+    restart: always
+    environment:
+      DB_HOST: db-webdinamis
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+    depends_on:
+      db-webdinamis:
+        condition: service_healthy
+    networks:
+      - app-network
+
+volumes:
+  db_data: {}
+
+networks:
+  app-network:
+    driver: bridge

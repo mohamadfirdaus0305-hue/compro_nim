@@ -1,0 +1,88 @@
+name: Deploy Web Dinamis to AWS EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-dinamis/**'
+      - '.github/workflows/deploy-dinamis.yml'
+
+jobs:
+  build-and-push:
+    name: Build & Push Image to Docker Hub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./web-dinamis
+          push: true
+          # Dual tag: latest + SHA commit untuk rollback
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/web-dinamis:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/web-dinamis:${{ github.sha }}
+
+  deploy-to-ec2:
+    name: Deploy to EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # LANGKAH 1: Copy file compose & SQL ke server terlebih dahulu
+      - name: SCP — Copy Compose file & SQL to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_PRIVATE_KEY }}
+          port: 22
+          source: "web-dinamis/docker-compose.yml,web-dinamis/db_data/dbcompro_nim.sql,web-dinamis/db_data/migrations"
+          target: "/home/ubuntu/container-dinamis"
+          strip_components: 1
+
+      # LANGKAH 2: Pull image baru & restart dengan docker compose
+      # docker compose up -d otomatis restart container yang imagenya berubah
+      # tanpa perlu rm manual → downtime lebih singkat
+      - name: SSH — Pull image & run docker compose
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /home/ubuntu/container-dinamis
+
+            # Pastikan file .env ada di server (harus dibuat manual sekali)
+            if [ ! -f .env ]; then
+              echo "ERROR: File .env tidak ditemukan di /home/ubuntu/container-dinamis/.env"
+              echo "Buat file .env dari template .env.example lalu coba lagi."
+              exit 1
+            fi
+
+            # Pull semua image terbaru
+            docker compose pull
+
+            # Jalankan ulang service yang imagenya berubah (zero-downtime untuk service lain)
+            docker compose up -d --remove-orphans
+
+            # Tunggu DB sehat sebelum migrasi (sudah ada healthcheck, tapi beri jeda kecil)
+            echo "Menunggu database siap..."
+            sleep 5
+
+            # Jalankan migrasi DB (skip file yang sudah pernah dijalankan)
+            docker exec db-webdinamis sh /migrations/migrate.sh
+
+            # Bersihkan image lama yang tidak terpakai
+            docker image prune -f
